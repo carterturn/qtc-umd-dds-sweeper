@@ -37,18 +37,19 @@
 #define VERSION "0.2.1"
 
 // Default Pins to use
-#define PIN_MISO 12
-#define PIN_MOSI 15
+#define PIN_MISO 8
+#define PIN_MOSI 11
 #define PIN_SCK 14
 #define PIN_SYNC 10
 #define PIN_CLOCK 21
-#define PIN_UPDATE 22
-#define PIN_RESET 9
+#define PIN_UPDATE 13
+#define PIN_RESET 15
 #define P0 19
 #define P1 18
 #define P2 17
 #define P3 16
-#define TRIGGER 8
+#define TRIGGER 0
+#define INT_TRIGGER 1
 
 #define PIO_TRIG pio0
 #define PIO_TIME pio1
@@ -119,9 +120,9 @@ void init_pin(uint pin) {
 
 void init_pio() {
     uint offset = pio_add_program(PIO_TRIG, &trigger_program);
-    trigger_program_init(PIO_TRIG, 0, offset, TRIGGER, P3, PIN_UPDATE);
+    trigger_program_init(PIO_TRIG, 0, offset, INT_TRIGGER, P3, PIN_UPDATE);
     offset = pio_add_program(PIO_TIME, &timer_program);
-    timer_program_init(PIO_TIME, 0, offset, TRIGGER);
+    timer_program_init(PIO_TIME, 0, offset, TRIGGER, INT_TRIGGER);
 }
 
 int get_status() {
@@ -192,12 +193,11 @@ void wait(uint channel) {
 void abort_run() {
     if (get_status() == RUNNING) {
         set_status(ABORTING);
-
         // take control of trigger pin from PIO
-        init_pin(TRIGGER);
-        gpio_put(TRIGGER, 1);
+        init_pin(INT_TRIGGER);
+        gpio_put(INT_TRIGGER, 1);
         sleep_ms(1);
-        gpio_put(TRIGGER, 0);
+        gpio_put(INT_TRIGGER, 0);
 
         // reinit PIO to give Trigger pin back
         init_pio();
@@ -213,22 +213,24 @@ void set_time(uint32_t addr, uint32_t time, int sweep_type, uint channels) {
 
     if (sweep_type == SS_MODE) {
         // single stepping
-        if (cycles < WAITS_SS_BASE + WAITS_SS_PER * channels) {
+        if (cycles > 0 && cycles < WAITS_SS_BASE + WAITS_SS_PER * channels) {
             cycles = WAITS_SS_BASE + WAITS_SS_PER * channels;
         }
     } else {
         // sweeping
-        if (cycles < WAITS_SW_BASE + WAITS_SW_PER * channels) {
+        if (cycles > 0 && cycles < WAITS_SW_BASE + WAITS_SW_PER * channels) {
             cycles = WAITS_SW_BASE + WAITS_SW_PER * channels;
         }
     }
 
-    if (addr == 0) {
-        // the first time through pio takes longer
-        cycles -= 18;
-    } else {
-        cycles -= 10;
-    }
+	if (cycles > 0){
+		if (addr == 0) {
+			// the first time through pio takes longer
+			cycles -= 18;
+		} else {
+			cycles -= 10;
+		}
+	}
     *((uint32_t *)(instructions + TIMING_OFFSET + 4 * addr)) = cycles;
 }
 
@@ -689,7 +691,12 @@ void loop() {
         OK();
     } else if (strncmp(readstring, "abort", 5) == 0) {
         abort_run();
-        OK();
+		if (get_status() != STOPPED) {
+			printf("Failed to abort\n");
+		}
+		else {
+			OK();
+		}
     }
     // ====================================================
     // Stuff that cannot be done while the table is running
