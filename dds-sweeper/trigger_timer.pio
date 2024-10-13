@@ -15,7 +15,8 @@ trigger:
     wait 1 pin 0
     out pins, 4         side 1 [3]
     out pins, 4         side 0
-    push                
+    push
+    wait 0 pin 0
  
 
 
@@ -27,7 +28,7 @@ trigger:
 start:
     pull block      side 0      ; pull the instruction from FIFO
     mov x, osr      side 0      ; move from osr to scratch register
-    jmp !x hwstart  side 0      ; if instuciton is 0 that means hwstart
+    jmp !x hwstart  side 0      ; if instruction is 0 that means hwstart
 
     nop             side 1 [5]  ; if not hwstart, hit the trigger pin
 loop:
@@ -83,17 +84,18 @@ hwstart:
     }
 
     static inline void timer_program_init(PIO pio, uint sm, uint offset,
-        uint trigger_pin
+                                          uint trigger_pin, uint int_trigger_pin
     ) {
         pio_sm_config c = timer_program_get_default_config(offset);
     
 
         pio_gpio_init(pio, trigger_pin);
+        pio_gpio_init(pio, int_trigger_pin);
         pio_sm_set_pindirs_with_mask(pio, sm, 
-            (1u << trigger_pin),
-            (1u << trigger_pin)
+            (0u << trigger_pin) | (1u << int_trigger_pin),
+            (1u << trigger_pin) | (1u << int_trigger_pin)
         );
-        sm_config_set_sideset_pins(&c, trigger_pin);
+        sm_config_set_sideset_pins(&c, int_trigger_pin);
         sm_config_set_in_pins(&c, trigger_pin);
 
         sm_config_set_out_shift(&c, true, false, 1);

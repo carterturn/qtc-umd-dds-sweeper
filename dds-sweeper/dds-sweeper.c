@@ -48,10 +48,14 @@
 #define P1 18
 #define P2 17
 #define P3 16
-#define TRIGGER 8
+#define PROFILE_ASC false
+#define TRIGGER 16
+#define INT_TRIGGER 17
 
 #define PIO_TRIG pio0
 #define PIO_TIME pio1
+
+#define SPI spi1
 
 // Mutex for status
 static mutex_t status_mutex;
@@ -119,9 +123,14 @@ void init_pin(uint pin) {
 
 void init_pio() {
     uint offset = pio_add_program(PIO_TRIG, &trigger_program);
-    trigger_program_init(PIO_TRIG, 0, offset, TRIGGER, P3, PIN_UPDATE);
-    offset = pio_add_program(PIO_TIME, &timer_program);
-    timer_program_init(PIO_TIME, 0, offset, TRIGGER);
+    uint profile_low = PROFILE_ASC ? P0 : P3;
+    uint trigger = timing ? INT_TRIGGER : TRIGGER;
+    trigger_program_init(PIO_TRIG, 0, offset, trigger, profile_low, PIN_UPDATE);
+
+    if(timing){
+        offset = pio_add_program(PIO_TIME, &timer_program);
+        timer_program_init(PIO_TIME, 0, offset, TRIGGER, INT_TRIGGER);
+    }
 }
 
 int get_status() {
@@ -193,11 +202,13 @@ void abort_run() {
     if (get_status() == RUNNING) {
         set_status(ABORTING);
 
-        // take control of trigger pin from PIO
-        init_pin(TRIGGER);
-        gpio_put(TRIGGER, 1);
-        sleep_ms(1);
-        gpio_put(TRIGGER, 0);
+        if(timing){
+            // take control of trigger pin from PIO
+            init_pin(INT_TRIGGER);
+            gpio_put(INT_TRIGGER, 1);
+            sleep_ms(1);
+            gpio_put(INT_TRIGGER, 0);
+        }
 
         // reinit PIO to give Trigger pin back
         init_pio();
@@ -325,14 +336,25 @@ bool set_ins(uint type, uint channel, uint addr, double s0, double e0, double de
             instructions[offset - 1] = 0xff;
         } else if (s0 <= e0) {
             // case: upward sweep on this channel
-            instructions[offset - 1] |= (1u << (3 - channel)) | (1u << (7 - channel));
+            if(PROFILE_ASC) {
+                instructions[offset - 1] |= (1u << channel) | (1u << (channel + 4));
+            }
+            else {
+                instructions[offset - 1] |= (1u << (3 - channel)) | (1u << (7 - channel));
+            }
         } else if (ad9959.channels == 1) {
             // case: downward sweep single channel mode
             instructions[offset - 1] = 0x0f;
         } else {
             // case: downward sweep on this channel
-            instructions[offset - 1] &= ~(1u << (7 - channel));
-            instructions[offset - 1] |= 1u << (3 - channel);
+            if(PROFILE_ASC) {
+                instructions[offset - 1] &= ~(1u << (channel + 4));
+                instructions[offset - 1] |= 1u << channel;
+            }
+            else {
+                instructions[offset - 1] &= ~(1u << (7 - channel));
+                instructions[offset - 1] |= 1u << (3 - channel);
+            }
         }
 
         if (type == AMP_MODE || type == AMP2_MODE) {
@@ -639,7 +661,7 @@ void background() {
             pio_sm_put(PIO_TRIG, 0, instructions[offset]);
 
             // send new instruciton to AD9959
-            spi_write_blocking(spi1, instructions + offset + 1, step - 1);
+            spi_write_blocking(SPI, instructions + offset + 1, step - 1);
 
             // if on the first instruction, begin the timer
             if (i == 0 && timing) {
@@ -1030,8 +1052,8 @@ int main() {
                     125 * MHZ);
 
     // init SPI
-    spi_init(spi1, 100 * MHZ);
-    spi_set_format(spi1, 8, SPI_CPOL_0, SPI_CPHA_0, SPI_MSB_FIRST);
+    spi_init(SPI, 100 * MHZ);
+    spi_set_format(SPI, 8, SPI_CPOL_0, SPI_CPHA_0, SPI_MSB_FIRST);
     gpio_set_function(PIN_MISO, GPIO_FUNC_SPI);
     gpio_set_function(PIN_SCK, GPIO_FUNC_SPI);
     gpio_set_function(PIN_MOSI, GPIO_FUNC_SPI);
